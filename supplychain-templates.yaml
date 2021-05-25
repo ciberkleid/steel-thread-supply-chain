@@ -1,0 +1,98 @@
+---
+apiVersion: experimental.kontinue.io/v1
+kind: SourceTemplate
+metadata:
+  name: git-repository-battery
+spec:
+  url:
+    path: $(status.artifact.url)
+
+  revision:
+    path: $(status.artifact.revision)
+
+  template:
+    apiVersion: source.toolkit.fluxcd.io/v1beta1
+    kind: GitRepository
+    metadata:
+      name: $(workload.name)-source
+    spec:
+      interval: 3m
+      url: $(workload.git.url)
+      ref: $(workload.git.ref)
+      gitImplementation: libgit2
+      ignore: ""
+
+
+---
+apiVersion: experimental.kontinue.io/v1
+kind: BuildTemplate
+metadata:
+  name: kpack-battery
+spec:
+  image:
+    path: $(status.latestImage)
+
+  template:
+    apiVersion: kpack.io/v1alpha1
+    kind: Image
+    metadata:
+      name: $(workload.name)-image
+    spec:
+      tag: harbor-repo.vmware.com/kontinuedemo/$(workload.name)
+      serviceAccount: service-account
+      builder:
+        kind: ClusterBuilder
+        name: java-builder
+      source:
+        blob:
+          url: $(sources.0.url)
+
+
+---
+apiVersion: experimental.kontinue.io/v1
+kind: OpinionTemplate
+metadata:
+  name: opinion-service-battery
+spec:
+  opinion:
+    path: $(status.template)
+
+  template:
+    apiVersion: opinions.local/v1alpha1
+    kind: WorkloadDecorator
+    metadata:
+      name: $(workload.name)-workload-template
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: $(workload.name)
+          annotations:
+            autoscaling.knative.dev/minScale: "1"
+            autoscaling.knative.dev/maxScale: "1"
+        spec:
+          containers:
+            - name: workload
+              image: $(images.#[name==solo-image-provider].image)
+              env: $(workload.env)
+              resources: $(workload.resources)
+              securityContext:
+                runAsUser: 1000
+          imagePullSecrets:
+            - name: registry-credentials
+
+
+---
+apiVersion: experimental.kontinue.io/v1
+kind: ConfigTemplate
+metadata:
+  name: cluster-sink-battery
+spec:
+  template:
+    apiVersion: experimental.kontinue.io/v1
+    kind: WorkloadConfiguration
+    metadata:
+      name: $(workload.name)
+      labels:
+        app.tanzu.vmware.com/workload-type: web
+    value: $(opinions.0.opinion)
